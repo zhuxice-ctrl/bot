@@ -1,0 +1,16 @@
+[project]
+name = "qq-auto-delivery-bot"
+version = "1.0.0"
+description = "QQ自动发卡机器人 - 支付回调+自动下单+卡密发货"
+requires-python = ">=3.10"
+
+[tool.nonebot]
+adapters = [
+    { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
+]
+plugins = []
+plugin_dirs = ["src/plugins"]
+builtin_plugins = []
+
+[tool.nonebot.env]
+environment = "prod"

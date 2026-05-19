@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# Data
+data/orders.db
+data/screenshots/*.png
+data/video_reports/
+data/cookies/
+vendor/yt-dlp/
+
+# Environment
+.env
+
+# Runtime artifacts
+logs/
+*.log
+deploy_bundle.tgz
+napcat_qrcode.png
+
+# IDE
+.vscode/
+.idea/
