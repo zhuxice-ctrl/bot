@@ -18,6 +18,7 @@ from src.plugins.video_report.douyin_browser import (
 from src.plugins.video_report.workflow import (
     build_report_messages,
     build_pending_review_reminder,
+    build_report_context,
     build_report_header,
     chat_mode_setting_key,
     extract_first_url,
@@ -125,6 +126,28 @@ def test_build_pending_review_reminder_uses_previous_report_title_and_date():
     assert "上一条视频" in reminder
     assert "2026-05-20 04:30" in reminder
     assert "/回顾" in reminder
+
+
+def test_build_report_context_keeps_report_metadata_and_transcript_for_followup():
+    context = build_report_context(
+        index_info={
+            "title": "测试标题",
+            "report_id": "VR-1",
+            "generated_at_text": "2026-05-20 05:10",
+            "url": "https://v.douyin.com/test/",
+        },
+        report="短视频内容分析报告\n核心观点: 测试观点",
+        metadata_summary="标题: 测试标题\n作者: 作者A",
+        transcript="[0.0-1.0] 测试语音",
+        warnings=["画面 OCR 未获取"],
+    )
+
+    assert context["title"] == "测试标题"
+    assert context["report_id"] == "VR-1"
+    assert "核心观点" in context["report"]
+    assert "作者A" in context["metadata_summary"]
+    assert "测试语音" in context["transcript"]
+    assert context["warnings"] == ["画面 OCR 未获取"]
 
 
 def test_build_report_messages_prefers_content_evidence_over_guessing():

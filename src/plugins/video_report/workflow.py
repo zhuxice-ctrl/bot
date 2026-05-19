@@ -116,6 +116,26 @@ def build_pending_review_reminder(previous: dict[str, Any] | None) -> str:
     )
 
 
+def build_report_context(
+    index_info: dict[str, str],
+    report: str,
+    metadata_summary: str,
+    transcript: str,
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    """保存一份可用于后续追问的报告上下文。"""
+    return {
+        "title": _clip(index_info.get("title", "未命名视频"), 200),
+        "report_id": _clip(index_info.get("report_id", ""), 80),
+        "generated_at_text": _clip(index_info.get("generated_at_text", ""), 40),
+        "url": _clip(index_info.get("url", ""), 300),
+        "report": _clip(report, 6000),
+        "metadata_summary": _clip(metadata_summary, 2500),
+        "transcript": _clip(transcript, 5000),
+        "warnings": warnings or [],
+    }
+
+
 def build_report_messages(
     metadata_summary: str,
     transcript: str = "",

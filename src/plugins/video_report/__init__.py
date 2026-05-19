@@ -12,6 +12,7 @@ from ..database import db
 from .service import VideoReportService
 from .workflow import (
     build_pending_review_reminder,
+    build_report_context,
     chat_mode_setting_key,
     extract_preferred_video_url,
     is_douyin_url,
@@ -115,6 +116,7 @@ async def _run_video_report(bot: Bot, event: MessageEvent, url: str, received_me
         await bot.send(event, build_pending_review_reminder(previous))
     result = await VideoReportService().generate(url)
     await _save_pending_review(event, result.index_info)
+    await _save_report_context(event, result)
     await _send_report(bot, event, result.report)
 
 
@@ -148,6 +150,11 @@ def _pending_review_key(event: MessageEvent) -> str:
     return f"video_report:pending_review:{scope}:{identifier}"
 
 
+def _report_context_key(event: MessageEvent) -> str:
+    scope, identifier = _chat_scope(event)
+    return f"video_report:last_context:{scope}:{identifier}"
+
+
 async def _set_chat_mode(event: MessageEvent, mode: str):
     normalized = normalize_chat_mode(mode)
     if normalized:
@@ -161,6 +168,17 @@ async def _get_chat_mode(event: MessageEvent) -> str:
 
 async def _save_pending_review(event: MessageEvent, index_info: dict[str, str]):
     await db.set_setting(_pending_review_key(event), json.dumps(index_info, ensure_ascii=False))
+
+
+async def _save_report_context(event: MessageEvent, result):
+    context = build_report_context(
+        index_info=result.index_info,
+        report=result.report,
+        metadata_summary=result.metadata_summary,
+        transcript=result.transcript,
+        warnings=result.warnings,
+    )
+    await db.set_setting(_report_context_key(event), json.dumps(context, ensure_ascii=False))
 
 
 async def _get_pending_review(event: MessageEvent) -> dict[str, str] | None:

@@ -7,8 +7,11 @@ from openai import AsyncOpenAI
 from nonebot import get_driver
 from nonebot.log import logger
 
+from .mode_router import build_video_report_followup_messages
+
 # 对话历史缓存（简易实现，生产可用 Redis）
 _chat_history: dict[str, list] = {}
+_video_report_history: dict[str, list] = {}
 MAX_HISTORY = 10
 
 SYSTEM_PROMPT = """你是一个虚拟商品自动发卡机器人的 QQ 客服。
@@ -83,4 +86,46 @@ async def ai_reply(text: str, user_qq: str) -> Optional[str]:
 
     except Exception as e:
         logger.error(f"AI 回复请求失败: {e}")
+        return None
+
+
+async def video_report_followup_reply(
+    question: str,
+    context: dict[str, object],
+    session_id: str,
+) -> Optional[str]:
+    """基于上一份视频报告上下文回答追问。"""
+    client = get_client()
+    if not client:
+        logger.debug("AI 视频报告追问未配置 API Key，跳过")
+        return None
+
+    config = get_driver().config
+    model = getattr(config, "openai_model", "gpt-4o-mini")
+
+    history = _video_report_history.setdefault(session_id, [])
+    history.append({"role": "user", "content": question})
+    if len(history) > MAX_HISTORY * 2:
+        history = history[-MAX_HISTORY * 2:]
+        _video_report_history[session_id] = history
+
+    base_messages = build_video_report_followup_messages(context, question)
+    messages = [base_messages[0]]
+    if history[:-1]:
+        messages.extend(history[:-1])
+    messages.append(base_messages[1])
+
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=600,
+            temperature=0.25,
+        )
+        reply = (response.choices[0].message.content or "").strip()
+        if reply:
+            history.append({"role": "assistant", "content": reply})
+        return reply or None
+    except Exception as e:
+        logger.error(f"视频报告追问请求失败: {e}")
         return None

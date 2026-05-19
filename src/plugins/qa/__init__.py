@@ -12,8 +12,8 @@ from nonebot.adapters.onebot.v11 import Bot, MessageEvent, PrivateMessageEvent, 
 from nonebot.log import logger
 
 from .keywords import match_keyword
-from .ai_chat import ai_reply
-from .mode_router import build_tk_mode_reply
+from .ai_chat import ai_reply, video_report_followup_reply
+from .mode_router import build_tk_mode_reply, build_video_report_fallback_reply
 from ..database import db
 
 # === 命令处理器 ===
@@ -129,7 +129,16 @@ async def handle_general(bot: Bot, event: MessageEvent):
     user_qq = str(event.user_id)
 
     if chat_mode == "tk":
-        await general_msg.finish(build_tk_mode_reply(text))
+        context = await _get_video_report_context(event)
+        if not context:
+            await general_msg.finish(build_tk_mode_reply(text))
+            return
+        try:
+            reply = await video_report_followup_reply(text, context, _context_session_id(event))
+        except Exception as e:
+            logger.error(f"视频报告追问异常: {e}")
+            reply = None
+        await general_msg.finish(reply or build_video_report_fallback_reply(context, text))
         return
 
     # 1. 关键词匹配
@@ -156,7 +165,24 @@ def _chat_scope(event: MessageEvent) -> tuple[str, str]:
     return "private", str(event.user_id)
 
 
+def _context_session_id(event: MessageEvent) -> str:
+    scope, identifier = _chat_scope(event)
+    return f"{scope}:{identifier}"
+
+
 async def _get_chat_mode(event: MessageEvent) -> str:
     scope, identifier = _chat_scope(event)
     saved = await db.get_setting(f"chat_mode:{scope}:{identifier}")
     return saved if saved in {"shop", "tk"} else "shop"
+
+
+async def _get_video_report_context(event: MessageEvent) -> dict[str, object] | None:
+    scope, identifier = _chat_scope(event)
+    raw = await db.get_setting(f"video_report:last_context:{scope}:{identifier}")
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
