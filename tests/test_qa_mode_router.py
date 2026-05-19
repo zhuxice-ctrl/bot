@@ -6,6 +6,8 @@ except ValueError:
     nonebot.init()
 
 from src.plugins.qa.mode_router import (
+    build_tk_chat_fallback_reply,
+    build_tk_chat_messages,
     build_tk_mode_reply,
     build_video_report_fallback_reply,
     build_video_report_followup_messages,
@@ -21,6 +23,24 @@ def test_build_tk_mode_reply_describes_video_report_mode_not_shop_mode():
     assert "/回顾" in reply
     assert "/shop" in reply
     assert "发 /商品" not in reply
+
+
+def test_build_tk_chat_messages_allow_casual_chat_without_shop_prompt():
+    messages = build_tk_chat_messages("今天有点累")
+    combined = "\n".join(item["content"] for item in messages)
+
+    assert "自然闲聊" in combined
+    assert "短视频" in combined
+    assert "发 /商品" not in combined
+    assert "/订单" not in combined
+    assert "今天有点累" in combined
+
+
+def test_build_tk_chat_fallback_reply_is_not_link_only_template():
+    reply = build_tk_chat_fallback_reply("今天有点累")
+
+    assert "可以聊" in reply
+    assert "发抖音链接" not in reply
 
 
 def test_build_video_report_followup_messages_use_report_context_and_visible_logic_chain():
@@ -40,6 +60,7 @@ def test_build_video_report_followup_messages_use_report_context_and_visible_log
     assert "结论" in combined
     assert "依据" in combined
     assert "不要输出内部思维链" in combined
+    assert "如果用户问题和报告无关" in combined
 
 
 def test_build_video_report_fallback_reply_answers_from_context_summary():

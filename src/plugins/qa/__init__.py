@@ -12,8 +12,8 @@ from nonebot.adapters.onebot.v11 import Bot, MessageEvent, PrivateMessageEvent, 
 from nonebot.log import logger
 
 from .keywords import match_keyword
-from .ai_chat import ai_reply, video_report_followup_reply
-from .mode_router import build_tk_mode_reply, build_video_report_fallback_reply
+from .ai_chat import ai_reply, tk_chat_reply, video_report_followup_reply
+from .mode_router import build_tk_chat_fallback_reply, build_tk_mode_reply, build_video_report_fallback_reply
 from ..database import db
 
 # === 命令处理器 ===
@@ -131,7 +131,12 @@ async def handle_general(bot: Bot, event: MessageEvent):
     if chat_mode == "tk":
         context = await _get_video_report_context(event)
         if not context:
-            await general_msg.finish(build_tk_mode_reply(text))
+            try:
+                reply = await tk_chat_reply(text, _context_session_id(event))
+            except Exception as e:
+                logger.error(f"/tk 闲聊异常: {e}")
+                reply = None
+            await general_msg.finish(reply or build_tk_chat_fallback_reply(text))
             return
         try:
             reply = await video_report_followup_reply(text, context, _context_session_id(event))

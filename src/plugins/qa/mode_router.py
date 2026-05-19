@@ -23,17 +23,41 @@ def build_tk_mode_reply(text: str, has_report_context: bool = False) -> str:
     )
 
 
+def build_tk_chat_messages(text: str) -> list[dict[str, str]]:
+    """构造 /tk 模式下的自然闲聊消息。"""
+    system_prompt = (
+        "你是一个短视频分析和创作复盘助手，也可以自然闲聊。"
+        "当前处于 /tk 视频报告模式，不要使用商品客服话术，不要引导用户买商品或查订单。"
+        "如果用户只是闲聊，就像正常朋友一样简短回应；如果用户问短视频、账号、选题、脚本、AI工具，给具体建议。"
+        "如果用户想生成报告，提醒可以直接发抖音分享文本或链接。"
+        "回复控制在 120 字以内，语气自然。"
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": text.strip()},
+    ]
+
+
+def build_tk_chat_fallback_reply(text: str) -> str:
+    """模型不可用时的 /tk 闲聊兜底。"""
+    clean = (text or "").strip()
+    if any(word in clean for word in ("累", "烦", "困", "难受", "压力")):
+        return "可以聊。你要是累了，先把最想解决的一件事说出来，我帮你拆小一点。"
+    return "可以聊。你也可以问我短视频选题、脚本、账号方向，或者直接发一条抖音内容让我分析。"
+
+
 def build_video_report_followup_messages(
     context: dict[str, object],
     question: str,
 ) -> list[dict[str, str]]:
     """构造基于上一份视频报告上下文的追问消息。"""
     system_prompt = (
-        "你是短视频报告复盘助手。只能基于提供的报告上下文、元数据和语音转写回答用户追问。"
+        "你是短视频报告复盘助手。优先基于提供的报告上下文、元数据和语音转写回答用户追问。"
         "先在内部按证据链核对: 用户问题 -> 可用证据 -> 判断 -> 不确定项，但不要输出内部思维链。"
         "最终用简洁中文回答，优先给可执行建议。"
         "回答结构按需要使用: 结论、依据、不确定点、下一步。"
         "如果上下文没有证据，明确说当前报告里没有足够证据，不要编造。"
+        "如果用户问题和报告无关，可以自然闲聊或回答一般短视频问题，并说明这不是基于上一份报告的判断。"
     )
     user_prompt = (
         f"用户问题:\n{question.strip()}\n\n"
