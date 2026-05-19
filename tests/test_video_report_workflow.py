@@ -9,6 +9,7 @@ except ValueError:
 
 from src.plugins.video_report.service import YtDlpClient, _load_cached_douyin_info
 from src.plugins.video_report.service import VideoReportConfig
+from src.plugins.video_report.service import _merge_visual_text
 from src.plugins.video_report.douyin_browser import (
     DouyinBrowserConfig,
     DouyinBrowserResolver,
@@ -20,6 +21,10 @@ from src.plugins.video_report.workflow import (
     build_pending_review_reminder,
     build_report_context,
     build_report_header,
+    append_report_history,
+    find_report_in_history,
+    format_report_detail,
+    format_report_history_list,
     chat_mode_setting_key,
     extract_first_url,
     extract_preferred_video_url,
@@ -178,6 +183,51 @@ def test_build_report_messages_requests_direct_operational_style():
     assert "运营复盘" in combined
 
 
+def test_build_report_messages_requests_tighter_non_template_report_with_visual_evidence():
+    messages = build_report_messages(
+        metadata_summary="标题: 测试标题",
+        transcript="今天讲 AI 工具。",
+        visual_text="画面 1: 豆包、Cursor、Claude Code",
+    )
+    combined = "\n".join(message["content"] for message in messages)
+
+    assert "控制在 900 字以内" in combined
+    assert "少写套话" in combined
+    assert "画面 1: 豆包" in combined
+    assert "画面证据" in combined
+
+
+def test_report_history_append_list_find_and_detail():
+    first = {
+        "title": "第一条",
+        "report_id": "VR-1",
+        "generated_at_text": "2026-05-20 05:00",
+        "url": "https://v.douyin.com/1/",
+        "report": "第一条报告正文",
+    }
+    second = {
+        "title": "第二条",
+        "report_id": "VR-2",
+        "generated_at_text": "2026-05-20 05:10",
+        "url": "https://v.douyin.com/2/",
+        "report": "第二条报告正文",
+    }
+
+    history = append_report_history([], first, limit=2)
+    history = append_report_history(history, second, limit=2)
+    history = append_report_history(history, {**first, "title": "第一条更新"}, limit=2)
+
+    assert [item["report_id"] for item in history] == ["VR-1", "VR-2"]
+    listing = format_report_history_list(history)
+    assert "1. 2026-05-20 05:00 | 第一条更新 | VR-1" in listing
+    assert "2. 2026-05-20 05:10 | 第二条 | VR-2" in listing
+    assert find_report_in_history(history, "VR-2")["title"] == "第二条"
+    assert find_report_in_history(history, "2")["report_id"] == "VR-2"
+    detail = format_report_detail(second)
+    assert "报告编号: VR-2" in detail
+    assert "第二条报告正文" in detail
+
+
 def test_ytdlp_client_uses_cookie_file_when_present(tmp_path):
     cookie_file = tmp_path / "douyin.txt"
     cookie_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
@@ -291,3 +341,30 @@ def test_video_report_config_reads_max_concurrency(monkeypatch):
     )
 
     assert VideoReportConfig.from_nonebot().max_concurrency == 2
+
+
+def test_video_report_config_reads_visual_options(monkeypatch):
+    class Config:
+        video_report_visual_analysis = "true"
+        video_report_frame_count = "4"
+        video_report_vision_model = "gpt-4o-mini"
+
+    monkeypatch.setattr(
+        "src.plugins.video_report.service.get_driver",
+        lambda: type("Driver", (), {"config": Config()})(),
+    )
+
+    config = VideoReportConfig.from_nonebot()
+
+    assert config.visual_analysis is True
+    assert config.frame_count == 4
+    assert config.vision_model == "gpt-4o-mini"
+
+
+def test_merge_visual_text_adds_warnings_when_empty():
+    warnings = []
+
+    merged = _merge_visual_text("", warnings)
+
+    assert merged == ""
+    assert "未获取到画面 OCR/视觉识别结果" in warnings

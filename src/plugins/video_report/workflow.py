@@ -121,6 +121,7 @@ def build_report_context(
     report: str,
     metadata_summary: str,
     transcript: str,
+    visual_text: str = "",
     warnings: list[str] | None = None,
 ) -> dict[str, Any]:
     """保存一份可用于后续追问的报告上下文。"""
@@ -132,8 +133,73 @@ def build_report_context(
         "report": _clip(report, 6000),
         "metadata_summary": _clip(metadata_summary, 2500),
         "transcript": _clip(transcript, 5000),
+        "visual_text": _clip(visual_text, 2500),
         "warnings": warnings or [],
     }
+
+
+def append_report_history(
+    history: list[dict[str, Any]],
+    context: dict[str, Any],
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """把报告上下文加入历史，按报告编号去重并限制数量。"""
+    report_id = str(context.get("report_id") or "").strip()
+    filtered = [
+        item for item in history
+        if str(item.get("report_id") or "").strip() != report_id
+    ]
+    filtered.insert(0, context)
+    return filtered[: max(1, limit)]
+
+
+def find_report_in_history(history: list[dict[str, Any]], query: str) -> dict[str, Any] | None:
+    """按编号、标题关键词或列表序号查找报告。"""
+    clean = str(query or "").strip()
+    if not clean:
+        return history[0] if history else None
+    if clean.isdigit():
+        index = int(clean) - 1
+        if 0 <= index < len(history):
+            return history[index]
+    lowered = clean.lower()
+    for item in history:
+        report_id = str(item.get("report_id") or "").lower()
+        title = str(item.get("title") or "").lower()
+        if lowered == report_id or lowered in report_id or lowered in title:
+            return item
+    return None
+
+
+def format_report_history_list(history: list[dict[str, Any]]) -> str:
+    """格式化报告历史列表。"""
+    if not history:
+        return "暂无视频报告历史。"
+    lines = ["报告历史:"]
+    for index, item in enumerate(history, start=1):
+        date_text = _clean_text(str(item.get("generated_at_text") or "未知时间"))
+        title = _clean_text(str(item.get("title") or "未命名视频"))
+        report_id = _clean_text(str(item.get("report_id") or "无编号"))
+        lines.append(f"{index}. {date_text} | {title} | {report_id}")
+    lines.append("\n发送 /报告 <编号或序号> 查看详情。")
+    return "\n".join(lines)
+
+
+def format_report_detail(item: dict[str, Any]) -> str:
+    """格式化单份报告详情。"""
+    title = _clean_text(str(item.get("title") or "未命名视频"))
+    report_id = _clean_text(str(item.get("report_id") or "未知"))
+    generated_at = _clean_text(str(item.get("generated_at_text") or "未知"))
+    url = _clean_text(str(item.get("url") or "未知"))
+    report = str(item.get("report") or "未保存报告正文").strip()
+    return (
+        f"报告详情\n"
+        f"标题: {title}\n"
+        f"生成日期: {generated_at}\n"
+        f"报告编号: {report_id}\n"
+        f"链接: {url}\n\n"
+        f"{report}"
+    )
 
 
 def build_report_messages(
@@ -150,18 +216,18 @@ def build_report_messages(
         "不要把“未识别到语音”直接判断为“内容缺失”，只能说“当前未获取到对应语音证据”。"
         "先在内部按 ReAct/CoT 风格完成证据核对和判断，但不要输出内部思维链；"
         "最终只输出可给用户阅读的结论、依据、不确定项和建议。"
-        "报告要简洁、结构清晰，像运营复盘，不要像 AI 模板回复。"
+        "报告要简洁、结构清晰，像运营复盘，不要像 AI 模板回复；少写套话，控制在 900 字以内。"
     )
     user_prompt = (
         "请根据下面材料生成一份中文短视频分析报告。"
         "不要使用“好的”“根据您提供的材料”等开场白，第一行直接输出“短视频内容分析报告”。\n\n"
         "报告结构:\n"
-        "1. 内容摘要\n"
-        "2. 核心观点/卖点\n"
-        "3. 目标受众\n"
-        "4. 表达方式和节奏\n"
-        "5. 可复用亮点\n"
-        "6. 风险或信息不足\n\n"
+        "1. 内容摘要: 2-3 句，直接说视频讲了什么\n"
+        "2. 核心卖点: 只列最关键的 2-3 点\n"
+        "3. 受众与互动点: 说明谁会被吸引、为什么会评论/转发\n"
+        "4. 表达和节奏: 结合语音证据和画面证据判断\n"
+        "5. 可复用结构: 给出可直接复刻的脚本/标题结构\n"
+        "6. 信息不足: 只写真实缺口，不要泛泛而谈\n\n"
         f"【元数据】\n{metadata_summary or '无'}\n\n"
         f"【语音转写】\n{transcript or '未获取到语音转写'}\n\n"
         f"【画面/OCR】\n{visual_text or '未获取到画面识别结果'}"

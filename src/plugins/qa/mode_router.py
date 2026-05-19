@@ -45,6 +45,7 @@ def build_video_report_followup_messages(
         f"【报告正文】\n{context.get('report') or '无'}\n\n"
         f"【元数据】\n{context.get('metadata_summary') or '无'}\n\n"
         f"【语音转写】\n{context.get('transcript') or '无'}\n\n"
+        f"【画面/OCR】\n{context.get('visual_text') or '无'}\n\n"
         f"【已知不足】\n{context.get('warnings') or '无'}"
     )
     return [

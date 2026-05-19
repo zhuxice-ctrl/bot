@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import importlib
 import importlib.util
 import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -46,6 +48,9 @@ class VideoReportConfig:
     whisper_model: str = "base"
     max_transcript_chars: int = 12000
     max_concurrency: int = 1
+    visual_analysis: bool = True
+    frame_count: int = 3
+    vision_model: str = ""
 
     @classmethod
     def from_nonebot(cls) -> "VideoReportConfig":
@@ -65,6 +70,9 @@ class VideoReportConfig:
             whisper_model=str(getattr(config, "video_report_whisper_model", "base") or "base"),
             max_transcript_chars=int(getattr(config, "video_report_max_transcript_chars", 12000) or 12000),
             max_concurrency=max(1, int(getattr(config, "video_report_max_concurrency", 1) or 1)),
+            visual_analysis=_as_bool(getattr(config, "video_report_visual_analysis", True)),
+            frame_count=max(1, int(getattr(config, "video_report_frame_count", 3) or 3)),
+            vision_model=str(getattr(config, "video_report_vision_model", "") or ""),
         )
 
 
@@ -73,6 +81,7 @@ class VideoReportResult:
     report: str
     metadata_summary: str
     transcript: str
+    visual_text: str
     warnings: list[str]
     index_info: dict[str, str]
 
@@ -177,10 +186,17 @@ class VideoReportService:
         index_info = _build_index_info(metadata, generated_at)
 
         transcript = ""
+        visual_text = ""
+        media_path: Path | None = None
         if self.config.download_media:
-            if _has_faster_whisper():
+            if _has_faster_whisper() or self.config.visual_analysis:
                 try:
                     media_path = await self.ytdlp.download_media(url, work_dir)
+                except Exception as exc:
+                    logger.exception(f"视频媒体下载失败: {exc}")
+                    warnings.append(f"视频媒体下载失败: {exc}")
+            if media_path and _has_faster_whisper():
+                try:
                     transcript = await asyncio.to_thread(
                         _transcribe_media,
                         media_path,
@@ -190,10 +206,23 @@ class VideoReportService:
                 except Exception as exc:
                     logger.exception(f"视频语音转写失败: {exc}")
                     warnings.append(f"语音转写失败: {exc}")
-            else:
-                warnings.append("未安装 faster-whisper，已跳过语音转写和媒体下载")
+            elif not _has_faster_whisper():
+                warnings.append("未安装 faster-whisper，已跳过语音转写")
+            if media_path and self.config.visual_analysis:
+                try:
+                    visual_text = await _analyze_visual_frames(
+                        media_path,
+                        work_dir,
+                        self.config.frame_count,
+                        self.config.vision_model,
+                    )
+                except Exception as exc:
+                    logger.exception(f"视频画面 OCR/视觉识别失败: {exc}")
+                    warnings.append(f"画面 OCR/视觉识别失败: {exc}")
+        if self.config.visual_analysis:
+            visual_text = _merge_visual_text(visual_text, warnings)
 
-        report_body = await _generate_ai_report(metadata_summary, transcript, warnings)
+        report_body = await _generate_ai_report(metadata_summary, transcript, visual_text, warnings)
         report = _merge_report_header(header, report_body)
         if not self.config.keep_media:
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -202,6 +231,7 @@ class VideoReportService:
             report=report,
             metadata_summary=metadata_summary,
             transcript=transcript,
+            visual_text=visual_text,
             warnings=warnings,
             index_info=index_info,
         )
@@ -223,14 +253,19 @@ class VideoReportService:
             return url
 
 
-async def _generate_ai_report(metadata_summary: str, transcript: str, warnings: list[str]) -> str:
+async def _generate_ai_report(
+    metadata_summary: str,
+    transcript: str,
+    visual_text: str,
+    warnings: list[str],
+) -> str:
     client = _get_openai_client()
     if not client:
         return build_fallback_report(metadata_summary, transcript, warnings)
 
     config = get_driver().config
     model = getattr(config, "openai_model", "deepseek-chat")
-    messages = build_report_messages(metadata_summary, transcript)
+    messages = build_report_messages(metadata_summary, transcript, visual_text)
     try:
         response = await client.chat.completions.create(
             model=model,
@@ -288,6 +323,85 @@ def _build_index_info(info: dict[str, Any], generated_at: float) -> dict[str, st
 
 def _has_faster_whisper() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
+
+
+async def _analyze_visual_frames(
+    media_path: Path,
+    work_dir: Path,
+    frame_count: int,
+    vision_model: str,
+) -> str:
+    if not vision_model:
+        return ""
+    frames = await asyncio.to_thread(_extract_frame_images, media_path, work_dir, frame_count)
+    if not frames:
+        return ""
+    return await _describe_frames_with_vision(frames, vision_model)
+
+
+def _extract_frame_images(media_path: Path, work_dir: Path, frame_count: int) -> list[Path]:
+    frame_dir = work_dir / "frames"
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    output_pattern = str(frame_dir / "frame_%03d.jpg")
+    count = max(1, int(frame_count or 1))
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(media_path),
+        "-vf",
+        f"fps=1/{max(1, count)}",
+        "-frames:v",
+        str(count),
+        "-q:v",
+        "3",
+        output_pattern,
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return []
+    return sorted(frame_dir.glob("frame_*.jpg"))[:count]
+
+
+async def _describe_frames_with_vision(frames: list[Path], vision_model: str) -> str:
+    client = _get_openai_client()
+    if not client:
+        return ""
+    content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                "请识别这些短视频抽帧里的可见文字、界面、人物动作和关键信息。"
+                "只输出可见证据，格式为“画面1: ...”。不要推测看不见的内容。"
+            ),
+        }
+    ]
+    for frame in frames:
+        encoded = base64.b64encode(frame.read_bytes()).decode("ascii")
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+        })
+    try:
+        response = await client.chat.completions.create(
+            model=vision_model,
+            messages=[{"role": "user", "content": content}],
+            temperature=0,
+            max_tokens=600,
+        )
+    except Exception as exc:
+        logger.warning(f"视觉模型调用失败: {exc}")
+        return ""
+    return (response.choices[0].message.content or "").strip()
+
+
+def _merge_visual_text(visual_text: str, warnings: list[str]) -> str:
+    clean = (visual_text or "").strip()
+    if clean:
+        return clean
+    warnings.append("未获取到画面 OCR/视觉识别结果")
+    return ""
 
 
 def _transcribe_media(media_path: Path, model_name: str, max_chars: int) -> str:

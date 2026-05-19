@@ -86,6 +86,8 @@ python bot.py
 | `/tk [抖音链接]` | 切换到视频报告模式；可直接发送抖音分享文本 |
 | `/shop` | 切回商品/发货模式 |
 | `/回顾` | 查看上一份尚未细致追问的视频报告检索信息 |
+| `/报告列表` | 查看当前会话保存的视频报告历史 |
+| `/报告 <编号或序号>` | 查看某一份历史报告详情 |
 
 直接私聊发送抖音链接也会触发视频报告；群里默认需要 @ 机器人。切换到 `/tk` 模式后，群里直接发送抖音分享文本也会触发视频报告。
 
@@ -110,7 +112,11 @@ yt-dlp 读取标题、作者、描述、时长等元数据
 ↓
 如果安装了 faster-whisper，临时下载音频并转写
 ↓
-DeepSeek 根据元数据和语音转写生成中文报告
+如果配置了视觉模型，抽取视频画面并做 OCR/视觉识别
+↓
+DeepSeek/OpenAI 兼容模型根据元数据、语音转写和画面证据生成中文报告
+↓
+保存报告历史，支持 /报告列表 和 /报告 <编号>
 ↓
 临时媒体文件默认删除
 ```
@@ -129,11 +135,15 @@ VIDEO_REPORT_DOWNLOAD_MEDIA=true
 VIDEO_REPORT_KEEP_MEDIA=false
 VIDEO_REPORT_WHISPER_MODEL=base
 VIDEO_REPORT_MAX_CONCURRENCY=1
+VIDEO_REPORT_VISUAL_ANALYSIS=true
+VIDEO_REPORT_FRAME_COUNT=3
+VIDEO_REPORT_VISION_MODEL=
 ```
 
 抖音如果提示 `Fresh cookies are needed`，需要从已登录抖音的浏览器导出 Netscape 格式 cookies，并把文件路径填到 `VIDEO_REPORT_COOKIE_FILE`。服务器部署时建议放在 `/opt/qq-video-bot/data/cookies/douyin.txt`。
 开启 `VIDEO_REPORT_BROWSER_RESOLVE` 后，程序会先用服务器浏览器打开抖音页面并缓存详情 JSON，再把播放直链交给下载/转写流程。
 连续发送多个链接时，机器人会同时接收消息，并按 `VIDEO_REPORT_MAX_CONCURRENCY` 限制生成任务数量。服务器 CPU 较弱时建议保持 `1`，避免多个转写任务同时跑满 CPU。
+开启 `VIDEO_REPORT_VISUAL_ANALYSIS` 后会抽取若干视频画面；只有 `VIDEO_REPORT_VISION_MODEL` 配置为支持图片输入的 OpenAI 兼容视觉模型时，才会把画面证据加入报告。DeepSeek 文本模型不支持图片输入时请保持 `VIDEO_REPORT_VISION_MODEL` 为空，系统会记录“未获取到画面 OCR/视觉识别结果”，但不会阻塞报告生成。
 
 需要语音转写时安装可选依赖：
 

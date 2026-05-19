@@ -11,10 +11,14 @@ from nonebot.rule import Rule
 from ..database import db
 from .service import VideoReportService
 from .workflow import (
+    append_report_history,
     build_pending_review_reminder,
     build_report_context,
     chat_mode_setting_key,
     extract_preferred_video_url,
+    find_report_in_history,
+    format_report_detail,
+    format_report_history_list,
     is_douyin_url,
     normalize_chat_mode,
 )
@@ -45,6 +49,20 @@ video_report_cmd = on_command(
 review_report_cmd = on_command(
     "回顾",
     aliases={"报告回顾", "review"},
+    priority=5,
+    block=True,
+)
+
+report_list_cmd = on_command(
+    "报告列表",
+    aliases={"历史报告", "reportlist"},
+    priority=5,
+    block=True,
+)
+
+report_detail_cmd = on_command(
+    "报告",
+    aliases={"report"},
     priority=5,
     block=True,
 )
@@ -90,6 +108,26 @@ async def handle_review_report(event: MessageEvent):
         f"链接: {pending.get('url') or '未知'}\n\n"
         "你可以继续围绕这条视频追问: 选题为什么成立、脚本结构怎么拆、账号适配度、可复刻模板、标题怎么改。"
     )
+
+
+@report_list_cmd.handle()
+async def handle_report_list(event: MessageEvent):
+    history = await _get_report_history(event)
+    await report_list_cmd.finish(format_report_history_list(history))
+
+
+@report_detail_cmd.handle()
+async def handle_report_detail(event: MessageEvent, args: Message = CommandArg()):
+    query = args.extract_plain_text().strip()
+    history = await _get_report_history(event)
+    if not history:
+        await report_detail_cmd.finish("暂无视频报告历史。")
+    if not query:
+        await report_detail_cmd.finish(format_report_history_list(history))
+    item = find_report_in_history(history, query)
+    if not item:
+        await report_detail_cmd.finish("未找到对应报告。可发送 /报告列表 查看可用编号。")
+    await report_detail_cmd.finish(format_report_detail(item))
 
 
 async def _has_douyin_link(event: MessageEvent) -> bool:
@@ -155,6 +193,11 @@ def _report_context_key(event: MessageEvent) -> str:
     return f"video_report:last_context:{scope}:{identifier}"
 
 
+def _report_history_key(event: MessageEvent) -> str:
+    scope, identifier = _chat_scope(event)
+    return f"video_report:history:{scope}:{identifier}"
+
+
 async def _set_chat_mode(event: MessageEvent, mode: str):
     normalized = normalize_chat_mode(mode)
     if normalized:
@@ -176,9 +219,12 @@ async def _save_report_context(event: MessageEvent, result):
         report=result.report,
         metadata_summary=result.metadata_summary,
         transcript=result.transcript,
+        visual_text=result.visual_text,
         warnings=result.warnings,
     )
     await db.set_setting(_report_context_key(event), json.dumps(context, ensure_ascii=False))
+    history = append_report_history(await _get_report_history(event), context)
+    await db.set_setting(_report_history_key(event), json.dumps(history, ensure_ascii=False))
 
 
 async def _get_pending_review(event: MessageEvent) -> dict[str, str] | None:
@@ -190,6 +236,19 @@ async def _get_pending_review(event: MessageEvent) -> dict[str, str] | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
+
+
+async def _get_report_history(event: MessageEvent) -> list[dict]:
+    raw = await db.get_setting(_report_history_key(event))
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
 
 
 async def _clear_pending_review(event: MessageEvent):
